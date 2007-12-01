@@ -23,6 +23,19 @@
 #ifndef _privatelib_h_
 #define _privatelib_h_
 
+#include <TargetConditionals.h>
+
+#if !TARGET_OS_EMBEDDED
+  #define HAVE_CF_USER_NOTIFICATION     1
+  #define HAVE_HID_SYSTEM               1
+  #define HAVE_SMART_BATTERY            1
+#endif
+
+// TODO: Delete me once sync'd with OS (rdar://5608255)
+#ifndef kIOPMPSBatteryChargeStatusKey
+    #define kIOPMPSBatteryChargeStatusKey               "ChargeStatus"
+#endif
+
 struct IOPMBattery {
     io_registry_entry_t     me;
     io_object_t             msg_port;
@@ -31,19 +44,25 @@ struct IOPMBattery {
     bool                    externalChargeCapable:1;
     bool                    isCharging:1;
     bool                    isPresent:1;
+    bool                    markedNeedsReplacement:1;
     int                     currentCap;
     int                     maxCap;
     int                     designCap;
     int                     voltage;
-    int                     amperage;
+    int                     avgAmperage;
+    int                     instantAmperage;
     int                     maxerr;
     int                     cycleCount;
     int                     location;
-    int                     hwReportedTR;
+    int                     hwAverageTR;
+    int                     hwInstantTR;
     int                     swCalculatedTR;
     int                     invalidWakeSecs;
-    int                     health;
-    int                     healthConfidence;
+    CFStringRef             health;
+    CFStringRef             failureDetected;
+    CFStringRef             name;
+    CFStringRef             dynamicStoreKey;
+    CFStringRef             chargeStatus;
 };
 typedef struct IOPMBattery IOPMBattery;
 
@@ -60,7 +79,9 @@ __private_extern__ CFArrayRef _copyLegacyBatteryInfo(void);
 __private_extern__ void _askNicelyThenShutdownSystem(void);
 __private_extern__ void _askNicelyThenSleepSystem(void);
 
+#if !TARGET_OS_EMBEDDED
 __private_extern__ CFUserNotificationRef _showUPSWarning(void);
+#endif
 
 __private_extern__ IOReturn _setRootDomainProperty(
                                     CFStringRef     key,

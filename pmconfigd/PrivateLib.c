@@ -22,11 +22,13 @@
 
 
 #include <CoreFoundation/CoreFoundation.h>
+#include <SystemConfiguration/SystemConfiguration.h>
 #include <SystemConfiguration/SCValidation.h>
 #include <IOKit/IOReturn.h>
 #include <IOKit/pwr_mgt/IOPMLib.h>
 #include <IOKit/pwr_mgt/IOPM.h>
-#include <unistd.h>
+#include <IOKit/ps/IOPSKeys.h>
+#include <mach/mach.h>
 #include <grp.h>
 #include <pwd.h>
 #include <syslog.h>
@@ -34,8 +36,9 @@
 
 enum
 {
-    PowerMangerScheduledShutdown = 1,
-    PowerMangerScheduledSleep
+    PowerManagerScheduledShutdown = 1,
+    PowerManagerScheduledSleep,
+    PowerManagerScheduledRestart
 };
 
 /* If the battery doesn't specify an alternative time, we wait 16 seconds
@@ -104,13 +107,8 @@ _setRootDomainProperty(
     io_registry_entry_t         root_domain;
     IOReturn                    ret;
 
-    IOServiceGetMatchingServices(
-                    MACH_PORT_NULL, 
-                    IOServiceNameMatching("IOPMrootDomain"), 
-                    &it);
-    if(!it) return kIOReturnError;
-    root_domain = (io_registry_entry_t)IOIteratorNext(it);
-    if(!root_domain) return kIOReturnError;
+    root_domain = IORegistryEntryFromPath( kIOMasterPortDefault, 
+                        kIOPowerPlane ":/IOPowerConnection/IOPMrootDomain");
  
     ret = IORegistryEntrySetCFProperty(root_domain, key, val);
 
@@ -147,12 +145,17 @@ static void sendNotification(int command)
 
 __private_extern__ void _askNicelyThenShutdownSystem(void)
 {
-    sendNotification(PowerMangerScheduledShutdown);
+    sendNotification( PowerManagerScheduledShutdown );
 }
 
 __private_extern__ void _askNicelyThenSleepSystem(void)
 {
-    sendNotification(PowerMangerScheduledSleep);
+    sendNotification( PowerManagerScheduledSleep );
+}
+
+__private_extern__ void _askNicelyThenRestartSystem(void)
+{
+    sendNotification( PowerManagerScheduledRestart );
 }
 
 // Accessor for internal battery structs
@@ -200,6 +203,10 @@ static void _unpackBatteryState(IOPMBattery *b, CFDictionaryRef prop)
     boo = CFDictionaryGetValue(prop, CFSTR(kIOPMPSIsChargingKey));
     b->isCharging = (kCFBooleanTrue == boo);
 
+    b->failureDetected = (CFStringRef)CFDictionaryGetValue(prop, CFSTR(kIOPMPSErrorConditionKey));
+
+    b->chargeStatus = (CFStringRef)CFDictionaryGetValue(prop, CFSTR(kIOPMPSBatteryChargeStatusKey));
+
     n = CFDictionaryGetValue(prop, CFSTR(kIOPMPSCurrentCapacityKey));
     if(n) {
         CFNumberGetValue(n, kCFNumberIntType, &b->currentCap);
@@ -214,11 +221,17 @@ static void _unpackBatteryState(IOPMBattery *b, CFDictionaryRef prop)
     }
     n = CFDictionaryGetValue(prop, CFSTR(kIOPMPSTimeRemainingKey));
     if(n) {
-        CFNumberGetValue(n, kCFNumberIntType, &b->hwReportedTR);
+        CFNumberGetValue(n, kCFNumberIntType, &b->hwAverageTR);
     }
+    
+
+    n = CFDictionaryGetValue(prop, CFSTR("InstantAmperage"));
+    if(n) {
+        CFNumberGetValue(n, kCFNumberIntType, &b->instantAmperage);
+    }    
     n = CFDictionaryGetValue(prop, CFSTR(kIOPMPSAmperageKey));
     if(n) {
-        CFNumberGetValue(n, kCFNumberIntType, &b->amperage);
+        CFNumberGetValue(n, kCFNumberIntType, &b->avgAmperage);
     }
     n = CFDictionaryGetValue(prop, CFSTR(kIOPMPSMaxErrKey));
     if(n) {
@@ -237,14 +250,6 @@ static void _unpackBatteryState(IOPMBattery *b, CFDictionaryRef prop)
         CFNumberGetValue(n, kCFNumberIntType, &b->invalidWakeSecs);
     } else {
         b->invalidWakeSecs = kInvalidWakeSecsDefault;
-    }
-    n = CFDictionaryGetValue(prop, CFSTR(kIOPMPSBatteryHealthKey));
-    if(n) {
-        CFNumberGetValue(n, kCFNumberIntType, &b->health);
-    }
-    n = CFDictionaryGetValue(prop, CFSTR(kIOPMPSHealthConfidenceKey));
-    if(n) {
-        CFNumberGetValue(n, kCFNumberIntType, &b->healthConfidence);
     }
 
     return;
@@ -284,6 +289,18 @@ __private_extern__ IOPMBattery *_newBatteryFound(io_registry_entry_t where)
     batteries[new_battery_index] = new_battery;
     
     new_battery->me = where;
+
+    new_battery->name = CFStringCreateWithFormat(
+                            kCFAllocatorDefault, 
+                            NULL, 
+                            CFSTR("InternalBattery-%d"), 
+                            new_battery_index);                            
+    new_battery->dynamicStoreKey = SCDynamicStoreKeyCreate(
+                            kCFAllocatorDefault, 
+                            CFSTR("%@%@/InternalBattery-%d"),
+                            kSCDynamicStoreDomainState, 
+                            CFSTR(kIOPSDynamicStorePath), 
+                            new_battery_index);
 
     _batteryChanged(new_battery);
 
@@ -348,6 +365,8 @@ __private_extern__ CFArrayRef _copyLegacyBatteryInfo(void)
     return battery_info;
 }
 
+#if HAVE_CF_USER_NOTIFICATION
+
 __private_extern__ CFUserNotificationRef _showUPSWarning(void)
 {
 #ifndef STANDALONE
@@ -389,6 +408,8 @@ __private_extern__ CFUserNotificationRef _showUPSWarning(void)
     return NULL;
 #endif
 }
+
+#endif
 
 /************************* One off hack for AppleSMC
  *************************

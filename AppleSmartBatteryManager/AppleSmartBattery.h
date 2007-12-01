@@ -60,6 +60,7 @@ protected:
     uint8_t                     fIncompleteReadRetries;
     int                         fRetryAttempts;
     
+    bool                        fPermanentFailure;
     bool                        fFullyDischarged;
     bool                        fFullyCharged;
     bool                        fBatteryPresent;
@@ -81,16 +82,35 @@ protected:
     void    setFullyCharged(bool);
     bool    fullyCharged(void);
 
+    // Time remaining estimate - as measured instantaneously
+    void    setInstantaneousTimeToEmpty(int seconds);
+    
+    // Instantaneous amperage
+    void    setInstantAmperage(int mA);
+
+    // Time remaining estimate - 1 minute average
     void    setAverageTimeToEmpty(int seconds);
     int     averageTimeToEmpty(void);
 
+    // Time remaining until full estimate - 1 minute average
     void    setAverageTimeToFull(int seconds);
     int     averageTimeToFull(void);
     
     void    setManufactureDate(int date);
     int     manufactureDate(void);
 
+    void    setSerialNumber(uint16_t sernum);
+    uint16_t    serialNumber(void);
+    
+    void    setChargeStatus(const OSSymbol *sym);
+    const OSSymbol    *chargeStatus(void);
+
+    // An OSData container of manufacturer specific data
+    void    setManufacturerData(uint8_t *buffer, uint32_t bufferSize);
+
     void    oneTimeBatterySetup(void);
+    
+    void    constructAppleSerialNumber(void);
     
 public:
     static AppleSmartBattery *smartBattery(void);
